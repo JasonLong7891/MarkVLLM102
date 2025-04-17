@@ -175,3 +175,27 @@ cython_debug/
 .vscode
 .DS_Store
 watermark/XSIR/embedding/train_embeddings_10K.txt
+
+# Virtual Environment
+venv/
+ENV/
+markllm_venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+output/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ico
+*.pdf
