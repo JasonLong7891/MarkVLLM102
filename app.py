@@ -1,11 +1,10 @@
 from flask import Flask, render_template, request, jsonify
 import os
 from datetime import datetime
-from vllm import LLM, SamplingParams
 import torch
 from watermark.auto_watermark import AutoWatermarkForVLLM
 from utils.transformers_config import TransformersConfig
-from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, LogitsProcessorList
 from visualize.visualizer import DiscreteVisualizer
 from visualize.color_scheme import ColorSchemeForDiscreteVisualization
 from visualize.font_settings import FontSettings
@@ -32,21 +31,12 @@ AVAILABLE_WATERMARKS = ["Unigram", "UPV", "KGW"]
 
 def initialize_model(model_name):
     """Initialize the model and related components."""
-    model = LLM(
-        model=model_name,
-        trust_remote_code=True,
-        max_model_len=256,
-        gpu_memory_utilization=0.9,
-        enforce_eager=False,
-        dtype="auto"
-    )
-    
     config = AutoConfig.from_pretrained(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model_hf = AutoModelForCausalLM.from_pretrained(model_name).to(device)
+    model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
     
     transformers_config = TransformersConfig(
-        model=model_hf,
+        model=model,
         tokenizer=tokenizer,
         vocab_size=config.vocab_size,
         device=device,
@@ -56,7 +46,7 @@ def initialize_model(model_name):
         no_repeat_ngram_size=4
     )
     
-    return model, transformers_config
+    return (model, tokenizer), transformers_config
 
 def create_watermark(algorithm_name, transformers_config):
     """Create watermark instance."""
@@ -75,22 +65,45 @@ def create_visualizer():
         legend_settings=DiscreteLegendSettings()
     )
 
-def generate_text(model, prompt):
-    """Generate text from prompt."""
-    outputs = model.generate(
-        prompts=[prompt],
-        sampling_params=SamplingParams(
-            n=1,
-            temperature=1.0,
-            seed=42,
-            max_tokens=256,
-            min_tokens=16
-        )
-    )
+def generate_text(model_tuple, prompt):
+    """Generate text from prompt without watermark."""
+    model, tokenizer = model_tuple
+    inputs = tokenizer(prompt, return_tensors="pt").to(device)
     
-    if outputs and hasattr(outputs[0], 'outputs') and len(outputs[0].outputs) > 0:
-        return outputs[0].outputs[0].text
-    return None
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=256,
+            min_new_tokens=16,
+            do_sample=True,
+            temperature=1.0,
+            num_return_sequences=1,
+            pad_token_id=tokenizer.eos_token_id
+        )
+    
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+def generate_text_with_watermark(model_tuple, watermark, prompt):
+    """Generate text with watermark."""
+    model, tokenizer = model_tuple
+    
+    # Encode prompt
+    inputs = tokenizer(prompt, return_tensors="pt", add_special_tokens=True).to(device)
+    
+    # Generate text with watermark
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=256,
+            min_new_tokens=16,
+            do_sample=True,
+            temperature=1.0,
+            num_return_sequences=1,
+            pad_token_id=tokenizer.eos_token_id,
+            logits_processor=LogitsProcessorList([watermark.watermark.logits_processor])
+        )
+    
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 def create_visualization(visualizer, watermark, text):
     """Create visualization of watermarked text."""
@@ -123,17 +136,17 @@ def process():
         prompt = request.form['prompt']
         
         # Initialize components
-        model, transformers_config = initialize_model(model_name)
+        model_tuple, transformers_config = initialize_model(model_name)
         watermark = create_watermark(watermark_method, transformers_config)
         visualizer = create_visualizer()
         
-        # Generate original text
-        original_text = generate_text(model, prompt)
+        # Generate original text (without watermark)
+        original_text = generate_text(model_tuple, prompt)
         if not original_text:
             return jsonify({"error": "Failed to generate text"})
         
-        # Apply watermark
-        watermarked_text = watermark.apply_watermark(original_text)
+        # Generate watermarked text
+        watermarked_text = generate_text_with_watermark(model_tuple, watermark, prompt)
         
         # Create visualizations
         original_viz = create_visualization(visualizer, watermark, original_text)
@@ -150,7 +163,9 @@ def process():
         return jsonify(response)
         
     except Exception as e:
+        import traceback
+        print(traceback.format_exc())  # This will print the full error traceback
         return jsonify({"error": str(e)})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True) 
+    app.run(host='0.0.0.0', port=5000, debug=True)
