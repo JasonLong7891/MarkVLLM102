@@ -12,12 +12,17 @@ from visualize.legend_settings import DiscreteLegendSettings
 from visualize.page_layout_settings import PageLayoutSettings
 import base64
 from io import BytesIO
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
 # Initialize model and components
 device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {device}")
+logger.info(f"Using device: {device}")
 
 # Available models and watermark methods
 AVAILABLE_MODELS = {
@@ -31,22 +36,26 @@ AVAILABLE_WATERMARKS = ["Unigram", "UPV", "KGW"]
 
 def initialize_model(model_name):
     """Initialize the model and related components."""
-    config = AutoConfig.from_pretrained(model_name)
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
-    
-    transformers_config = TransformersConfig(
-        model=model,
-        tokenizer=tokenizer,
-        vocab_size=config.vocab_size,
-        device=device,
-        max_new_tokens=256,
-        max_length=256,
-        do_sample=True,
-        no_repeat_ngram_size=4
-    )
-    
-    return (model, tokenizer), transformers_config
+    try:
+        config = AutoConfig.from_pretrained(model_name)
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
+        
+        transformers_config = TransformersConfig(
+            model=model,
+            tokenizer=tokenizer,
+            vocab_size=config.vocab_size,
+            device=device,
+            max_new_tokens=256,
+            max_length=256,
+            do_sample=True,
+            no_repeat_ngram_size=4
+        )
+        
+        return (model, tokenizer), transformers_config
+    except Exception as e:
+        logger.error(f"Error initializing model {model_name}: {str(e)}")
+        raise
 
 def create_watermark(algorithm_name, transformers_config):
     """Create watermark instance."""
@@ -135,6 +144,8 @@ def process():
         watermark_method = request.form['watermark']
         prompt = request.form['prompt']
         
+        logger.info(f"Processing request with model: {model_name}, watermark: {watermark_method}")
+        
         # Initialize components
         model_tuple, transformers_config = initialize_model(model_name)
         watermark = create_watermark(watermark_method, transformers_config)
@@ -143,6 +154,7 @@ def process():
         # Generate original text (without watermark)
         original_text = generate_text(model_tuple, prompt)
         if not original_text:
+            logger.error("Failed to generate text")
             return jsonify({"error": "Failed to generate text"})
         
         # Generate watermarked text
@@ -160,12 +172,19 @@ def process():
             "watermarked_viz": watermarked_viz
         }
         
+        logger.info("Successfully processed request")
         return jsonify(response)
         
     except Exception as e:
-        import traceback
-        print(traceback.format_exc())  # This will print the full error traceback
-        return jsonify({"error": str(e)})
+        logger.error(f"Error processing request: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # Get port from environment variable or use default
+    port = int(os.environ.get('PORT', 10000))
+    
+    # Get debug mode from environment variable (default to False for production)
+    debug = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
+    
+    logger.info(f"Starting server on port {port} with debug={debug}")
+    app.run(host='0.0.0.0', port=port, debug=debug)
