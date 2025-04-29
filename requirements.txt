@@ -8,3 +8,4 @@ tqdm==4.65.0
 pillow==9.5.0
 requests==2.31.0
 Werkzeug==2.0.3
+huggingface_hub[hf_xet]
