@@ -353,16 +353,23 @@
                 method: 'POST',
                 body: formData
             })
-            .then(response => response.json())
-            .then(data => {
-                if (data.error) {
-                    throw new Error(data.error);
+            .then(async response => {
+                let data;
+                try {
+                    data = await response.json();
+                } catch (e) {
+                    // If response is not JSON, get text and show as error
+                    const text = await response.text();
+                    throw new Error(text.startsWith('<!DOCTYPE') ? 'Server error: received HTML instead of JSON. Please check server logs.' : text);
                 }
-                
+                if (!response.ok || data.error) {
+                    throw new Error(data.error || 'Unknown error occurred');
+                }
+                return data;
+            })
+            .then(data => {
                 // Calculate processing time
                 const processingTime = ((Date.now() - processingStartTime) / 1000).toFixed(1);
-                
-                // Update results
                 document.getElementById('originalText').textContent = data.original_text;
                 document.getElementById('watermarkedText').textContent = data.watermarked_text;
                 document.getElementById('originalViz').src = 'data:image/png;base64,' + data.original_viz;
@@ -370,7 +377,6 @@
                 document.getElementById('watermark-strength').textContent = '85%';
                 document.getElementById('text-length').textContent = data.watermarked_text.length;
                 document.getElementById('processing-time').textContent = processingTime + 's';
-                
                 // Show results section with animation
                 resultsSection.style.display = 'block';
                 setTimeout(() => {
