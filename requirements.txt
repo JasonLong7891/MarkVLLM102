@@ -1,6 +1,6 @@
 flask==2.0.1
-#torch==2.1.2
-transformers==4.30.2
+torch==2.1.2
+transformers>=4.36.0
 vllm==0.2.7
 numpy==1.24.3
 matplotlib==3.7.1
